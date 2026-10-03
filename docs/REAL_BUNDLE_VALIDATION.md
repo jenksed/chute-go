@@ -170,3 +170,21 @@ For every new real-bundle shape we encounter:
 3. make the smallest deterministic correction
 4. add a minimized regression fixture that reproduces the structure without committing the real support bundle
 5. keep diagnosis outside the deterministic preprocessing layer
+
+
+### 4. Tiering exposed a substring-matching defect during implementation
+
+The first CI run of the evidence-tier change found a second-order precision bug in the matcher itself. A short PVC name such as `data` could match inside a longer Pod name such as `database-0`.
+
+Impact:
+
+- a contextual Pod line could be incorrectly promoted to secondary evidence
+- evidence tiers would be present but their classification could still be wrong
+
+Fix:
+
+- identifier matching is now boundary-aware rather than arbitrary substring matching
+- alphanumeric characters, `-`, `_`, and `.` are treated as identifier characters
+- the regression fixture asserts that shared-workload context remains contextual rather than being promoted by an embedded shorter name
+
+This was found by the new regression suite before merge and is part of the same acceptance record.
