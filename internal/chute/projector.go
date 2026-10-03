@@ -6,16 +6,32 @@ import (
 )
 
 type VolumeProjection struct {
-	Volume          Resource
-	PV              *Resource
-	PVC             *Resource
-	Pods            []Resource
-	Attachments     []Resource
-	Engines         []Resource
-	Replicas        []Resource
-	KubernetesNodes []Resource
-	LonghornNodes   []Resource
-	Identifiers     []string
+	Volume              Resource
+	PV                  *Resource
+	PVC                 *Resource
+	Pods                []Resource
+	Attachments         []Resource
+	Engines             []Resource
+	Replicas            []Resource
+	KubernetesNodes     []Resource
+	LonghornNodes       []Resource
+	Events               []Resource
+	EvidenceIdentifiers []EvidenceIdentifier
+}
+
+type NodeProjection struct {
+	NodeName            string
+	KubernetesNodes     []Resource
+	LonghornNodes       []Resource
+	InstanceManagers    []Resource
+	Pods                []Resource
+	Engines             []Resource
+	Replicas            []Resource
+	Attachments         []Resource
+	Volumes             []Resource
+	Events               []Resource
+	Artifacts            []InventoryEntry
+	EvidenceIdentifiers []EvidenceIdentifier
 }
 
 func ProjectVolume(index *Index, volumeName string) (*VolumeProjection, error) {
@@ -55,7 +71,10 @@ func ProjectVolume(index *Index, volumeName string) (*VolumeProjection, error) {
 				})...,
 			),
 			mapResourceStrings(projection.Attachments, func(r Resource) string {
-				return nestedString(r.Data, "spec", "nodeName")
+				if value := nestedString(r.Data, "spec", "nodeName"); value != "" {
+					return value
+				}
+				return nestedString(r.Data, "spec", "nodeID")
 			})...,
 		),
 	)
@@ -71,7 +90,86 @@ func ProjectVolume(index *Index, volumeName string) (*VolumeProjection, error) {
 		}
 	}
 
-	projection.Identifiers = projectionIdentifiers(projection)
+	projection.EvidenceIdentifiers = volumeEvidenceIdentifiers(projection)
+	projection.Events = FindRelatedEvents(index, projection.EvidenceIdentifiers)
+	return projection, nil
+}
+
+func ProjectNode(index *Index, inventory []InventoryEntry, nodeName string) (*NodeProjection, error) {
+	projection := &NodeProjection{NodeName: nodeName}
+
+	for _, node := range index.Kind("Node") {
+		if node.Name != nodeName {
+			continue
+		}
+		if node.Longhorn() {
+			projection.LonghornNodes = append(projection.LonghornNodes, node)
+		} else {
+			projection.KubernetesNodes = append(projection.KubernetesNodes, node)
+		}
+	}
+
+	if len(projection.KubernetesNodes) == 0 && len(projection.LonghornNodes) == 0 {
+		return nil, fmt.Errorf("node not found: %s", nodeName)
+	}
+
+	for _, resource := range index.Longhorn("InstanceManager") {
+		if nestedString(resource.Data, "spec", "nodeID") == nodeName {
+			projection.InstanceManagers = append(projection.InstanceManagers, resource)
+		}
+	}
+	for _, pod := range index.Kind("Pod") {
+		if nestedString(pod.Data, "spec", "nodeName") == nodeName {
+			projection.Pods = append(projection.Pods, pod)
+		}
+	}
+	for _, engine := range index.Longhorn("Engine") {
+		if nestedString(engine.Data, "spec", "nodeID") == nodeName {
+			projection.Engines = append(projection.Engines, engine)
+		}
+	}
+	for _, replica := range index.Longhorn("Replica") {
+		if nestedString(replica.Data, "spec", "nodeID") == nodeName {
+			projection.Replicas = append(projection.Replicas, replica)
+		}
+	}
+	for _, attachment := range index.Kind("VolumeAttachment") {
+		if nestedString(attachment.Data, "spec", "nodeName") == nodeName ||
+			nestedString(attachment.Data, "spec", "nodeID") == nodeName {
+			projection.Attachments = append(projection.Attachments, attachment)
+		}
+	}
+
+	volumeNames := make([]string, 0)
+	for _, engine := range projection.Engines {
+		volumeNames = append(volumeNames, nestedString(engine.Data, "spec", "volumeName"))
+	}
+	for _, replica := range projection.Replicas {
+		volumeNames = append(volumeNames, nestedString(replica.Data, "spec", "volumeName"))
+	}
+	for _, volume := range index.LonghornVolumes() {
+		if nestedString(volume.Data, "status", "currentNodeID") == nodeName {
+			volumeNames = append(volumeNames, volume.Name)
+		}
+	}
+	volumeNames = uniqueNonEmpty(volumeNames)
+	for _, name := range volumeNames {
+		for _, volume := range index.LonghornVolumes() {
+			if volume.Name == name {
+				projection.Volumes = append(projection.Volumes, volume)
+				break
+			}
+		}
+	}
+
+	for _, entry := range inventory {
+		if entry.Node == nodeName && entry.Origin == "node_archive" {
+			projection.Artifacts = append(projection.Artifacts, entry)
+		}
+	}
+
+	projection.EvidenceIdentifiers = nodeEvidenceIdentifiers(projection)
+	projection.Events = FindRelatedEvents(index, projection.EvidenceIdentifiers)
 	return projection, nil
 }
 
@@ -258,31 +356,36 @@ func relatedLonghornResources(index *Index, kind, volumeName string) []Resource 
 	return resources
 }
 
-func projectionIdentifiers(projection *VolumeProjection) []string {
-	var resources []Resource
-	resources = append(resources, projection.Volume)
+func volumeEvidenceIdentifiers(projection *VolumeProjection) []EvidenceIdentifier {
+	var identifiers []EvidenceIdentifier
+	identifiers = addResourceIdentifiers(identifiers, &projection.Volume, TierPrimary, "volume")
+	identifiers = addResourceSliceIdentifiers(identifiers, projection.Engines, TierPrimary, "engine")
+	identifiers = addResourceSliceIdentifiers(identifiers, projection.Replicas, TierPrimary, "replica")
+	identifiers = addResourceSliceIdentifiers(identifiers, projection.Attachments, TierPrimary, "attachment")
+	identifiers = addResourceIdentifiers(identifiers, projection.PV, TierSecondary, "pv")
+	identifiers = addResourceIdentifiers(identifiers, projection.PVC, TierSecondary, "pvc")
+	identifiers = addResourceSliceIdentifiers(identifiers, projection.Pods, TierContextual, "pod")
+	identifiers = addResourceSliceIdentifiers(identifiers, projection.KubernetesNodes, TierContextual, "kubernetes_node")
+	identifiers = addResourceSliceIdentifiers(identifiers, projection.LonghornNodes, TierContextual, "longhorn_node")
+	return normalizeEvidenceIdentifiers(identifiers)
+}
 
-	if projection.PV != nil {
-		resources = append(resources, *projection.PV)
+func nodeEvidenceIdentifiers(projection *NodeProjection) []EvidenceIdentifier {
+	var identifiers []EvidenceIdentifier
+	for i := range projection.KubernetesNodes {
+		identifiers = addResourceIdentifiers(identifiers, &projection.KubernetesNodes[i], TierPrimary, "kubernetes_node")
 	}
-	if projection.PVC != nil {
-		resources = append(resources, *projection.PVC)
+	for i := range projection.LonghornNodes {
+		identifiers = addResourceIdentifiers(identifiers, &projection.LonghornNodes[i], TierPrimary, "longhorn_node")
 	}
-	resources = append(resources, projection.Engines...)
-	resources = append(resources, projection.Replicas...)
-	resources = append(resources, projection.Pods...)
-	resources = append(resources, projection.Attachments...)
-
-	var identifiers []string
-	for _, resource := range resources {
-		if len(resource.Name) >= 8 {
-			identifiers = append(identifiers, resource.Name)
-		}
-		if len(resource.UID) >= 8 {
-			identifiers = append(identifiers, resource.UID)
-		}
-	}
-	return uniqueNonEmpty(identifiers)
+	identifiers = append(identifiers, EvidenceIdentifier{Value: projection.NodeName, Tier: TierPrimary, Kind: "node.name"})
+	identifiers = addResourceSliceIdentifiers(identifiers, projection.InstanceManagers, TierPrimary, "instance_manager")
+	identifiers = addResourceSliceIdentifiers(identifiers, projection.Engines, TierSecondary, "engine")
+	identifiers = addResourceSliceIdentifiers(identifiers, projection.Replicas, TierSecondary, "replica")
+	identifiers = addResourceSliceIdentifiers(identifiers, projection.Attachments, TierSecondary, "attachment")
+	identifiers = addResourceSliceIdentifiers(identifiers, projection.Pods, TierContextual, "pod")
+	identifiers = addResourceSliceIdentifiers(identifiers, projection.Volumes, TierContextual, "volume")
+	return normalizeEvidenceIdentifiers(identifiers)
 }
 
 func mapResourceStrings(resources []Resource, fn func(Resource) string) []string {

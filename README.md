@@ -1,6 +1,6 @@
 # Chute
 
-Chute turns a Longhorn support bundle into a smaller, deterministic evidence package organized around the resources an engineer actually investigates.
+Chute turns a Longhorn support bundle into smaller, deterministic evidence packages organized around the resources an engineer actually investigates.
 
 Chute is an offline evidence transformer, not a Longhorn component and not a diagnostic authority.
 
@@ -9,15 +9,18 @@ Chute is an offline evidence transformer, not a Longhorn component and not a dia
 Chute can:
 
 - accept an extracted directory, `.zip`, `.tar.gz`, or `.tgz` support bundle
-- inventory files and classify likely YAML, logs, node data, and unknown artifacts
+- inventory files and report processing coverage
 - parse Kubernetes and Longhorn YAML resources
-- index resources by kind and name
+- recognize current, rotated, and gzip-compressed logs
+- safely ingest nested `nodes/<node>.zip` evidence
 - inspect discovered Longhorn volumes before choosing a case
 - resolve a volume from a PVC or Pod selector
-- connect PVCs, PVs, Pods, VolumeAttachments, Longhorn volumes, engines, replicas, and nodes using explicit identifiers
-- emit a per-volume case directory containing related objects and provenance
-- extract bounded, deduplicated log-context windows around matching resource identifiers
-- record unclassified files in the manifest without copying the original bundle
+- connect PVCs, PVs, Pods, VolumeAttachments, Longhorn Volumes, Engines, Replicas, Nodes, Events, and InstanceManagers using explicit identifiers
+- emit volume-oriented and node-oriented evidence cases
+- label log matches as primary, secondary, or contextual evidence
+- emit bounded, merged log-context windows
+- emit deterministic timestamped evidence timelines
+- record unknown and unsupported artifacts instead of silently ignoring them
 
 It does not attempt root-cause diagnosis.
 
@@ -27,62 +30,64 @@ It does not attempt root-cause diagnosis.
 go build -o chute ./cmd/chute
 ```
 
-The result is a single executable with no Go runtime installation required on the target machine.
-
 ## Usage
 
-Inspect the volumes in a bundle before selecting a case:
+Inspect the volumes in a bundle:
 
 ```bash
 ./chute inspect supportbundle.zip
 ```
 
-Example output:
-
-```text
-VOLUME       PVC   NAMESPACE  STATE     ROBUSTNESS  REPLICAS  PODS
-pvc-abc123   data  default    detached  degraded    2         1
-```
-
-Process every Longhorn volume found in a bundle:
+Process every Longhorn volume:
 
 ```bash
 ./chute process --output ./processed supportbundle.zip
 ```
 
-Project one volume directly:
+Project one volume:
 
 ```bash
 ./chute volume --output ./case supportbundle.zip pvc-abc123
 ```
 
-Resolve the volume from a PVC or Pod:
+Resolve a volume from a PVC or Pod:
 
 ```bash
 ./chute volume --pvc default/data --output ./case supportbundle.zip
 ./chute volume --pod default/database-0 --output ./case supportbundle.zip
 ```
 
-Log evidence includes five lines before and after a matching line by default. Change it per command:
+Project one node, including extracted node-bundle evidence when available:
+
+```bash
+./chute node --output ./node-case supportbundle.zip worker-1
+```
+
+Log evidence includes five lines before and after a matching line by default:
 
 ```bash
 ./chute volume --context 10 supportbundle.zip pvc-abc123
+./chute node --context 10 supportbundle.zip worker-1
 ./chute process --context 0 supportbundle.zip
 ```
 
-Overlapping context windows are merged so the same evidence is not repeated.
-
-## Output
+## Bundle output
 
 ```text
 processed/
 ├── manifest.json
 ├── index.json
+├── coverage.json
+├── warnings.json
 └── volumes/
     └── <volume>/
         ├── summary.md
         ├── evidence.json
         ├── sources.json
+        ├── timeline.md
+        ├── timeline.jsonl
+        ├── relevant_logs.log
+        ├── events.yaml
         ├── volume.yaml
         ├── engines.yaml
         ├── replicas.yaml
@@ -91,29 +96,58 @@ processed/
         ├── pods.yaml
         ├── volume_attachments.yaml
         ├── kubernetes_nodes.yaml
-        ├── longhorn_nodes.yaml
-        └── relevant_logs.log
+        └── longhorn_nodes.yaml
 ```
 
-Each log evidence block records its source path, line range, and the identifiers that caused the match.
+A node case additionally contains related InstanceManagers and a `node_bundle/` directory containing safely extracted node-local evidence.
+
+## Evidence tiers
+
+Chute does not treat all string matches as equally strong.
+
+```text
+PRIMARY
+  Longhorn Volume / Engine / Replica / CSI VolumeAttachment
+
+SECONDARY
+  PersistentVolume / PersistentVolumeClaim
+
+CONTEXTUAL
+  Pod / Node and other operational neighbors
+```
+
+Every evidence window records which identifiers matched and the strongest tier represented in that window.
+
+Contextual evidence is retained because it can explain operational sequence. It must not be interpreted as proof that every object mentioned in the same line belongs to the selected volume.
+
+## Coverage
+
+`coverage.json` reports how much of the bundle Chute actually processed, including rotated logs and nested node archives.
+
+`warnings.json` reports partial processing, parse failures, failed nested archive ingestion, and unknown artifacts.
+
+Successful command execution therefore does not imply complete evidence coverage.
 
 ## Evidence boundary
 
-Chute separates four concerns:
-
-1. Raw bundle artifacts remain the source evidence.
+1. Raw bundle artifacts remain authoritative.
 2. Chute derives deterministic relationships from explicit resource identifiers.
-3. Exported summaries describe observed state and related evidence.
-4. Root-cause judgment remains with the engineer or downstream analysis system.
-
-Correlation is not emitted as causation.
+3. Chute labels the strength of evidence used for log selection.
+4. Timelines order observed evidence without inferring causation.
+5. Root-cause judgment remains with the engineer or downstream analysis system.
 
 ## Archive handling
 
-Archives are extracted into a temporary directory and removed after the command completes. Archive entries that attempt path traversal or use symlinks/hard links are rejected.
+Archives are extracted into temporary directories and removed after the command completes.
 
-## Current acceptance boundary
+The original bundle is never mutated. Archive path traversal and links are rejected. Nested node archives that cannot be safely processed are reported in warnings while the rest of the bundle remains available.
 
-Automated tests cover YAML parsing, Longhorn/Kubernetes relationship projection, PVC/Pod lookup, inspection output, ZIP and tar.gz ingestion, archive path-traversal rejection, provenance export, bounded/merged log windows, and case generation.
+## Validation
 
-The next meaningful acceptance step remains a real Longhorn support bundle. Real bundle structure and version differences should drive compatibility changes rather than speculative format support.
+The initial synthetic slice was followed by validation against a real Longhorn test support bundle. That run exposed three concrete gaps: rotated logs, nested node archives, and evidence-strength ambiguity around shared workload context.
+
+The issue, impact, remediation, and acceptance rules are documented in [docs/REAL_BUNDLE_VALIDATION.md](docs/REAL_BUNDLE_VALIDATION.md).
+
+Stable architectural decisions are recorded in [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md).
+
+The real support bundle is not committed. Regression tests reproduce the relevant structure with minimized fixture data.

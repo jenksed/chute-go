@@ -6,13 +6,28 @@ import (
 	"path/filepath"
 )
 
+type BundleWarning struct {
+	Code    string `json:"code"`
+	Source  string `json:"source,omitempty"`
+	Message string `json:"message"`
+}
+
+type NodeArchiveStatus struct {
+	Path           string `json:"path"`
+	Node           string `json:"node"`
+	ExtractedFiles int    `json:"extracted_files"`
+	Error          string `json:"error,omitempty"`
+}
+
 type Bundle struct {
-	Input       string
-	Root        string
-	Inventory   []InventoryEntry
-	Resources   []Resource
-	ParseErrors []ParseError
-	Index       *Index
+	Input        string
+	Root         string
+	Inventory    []InventoryEntry
+	Resources    []Resource
+	ParseErrors  []ParseError
+	Index        *Index
+	Warnings     []BundleWarning
+	NodeArchives []NodeArchiveStatus
 }
 
 func Load(root string) (*Bundle, error) {
