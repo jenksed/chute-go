@@ -129,33 +129,26 @@ test-support-bundle.zip
 ./chute inspect test-support-bundle.zip
 ```
 
-Example:
-
-```text
-VOLUME                                    PVC          NAMESPACE   STATE      ROBUSTNESS   REPLICAS   PODS
-pvc-ec25952c-fc84-4126-a5fb-9e1746e87e0e data         default     detached   unknown      3          1
-```
-
-This is usually the first command to run.
+This is usually the first command to run. For the actual January 5 validation bundle, see [the worked example](docs/EXAMPLE_CASE.md).
 
 ### 2. Build a case for one volume
 
 By Longhorn volume name:
 
 ```bash
-./chute volume   --output ./case   test-support-bundle.zip   pvc-ec25952c-fc84-4126-a5fb-9e1746e87e0e
+./chute volume --output ./case test-support-bundle.zip <LONGHORN_VOLUME>
 ```
 
 By PVC:
 
 ```bash
-./chute volume   --pvc default/data   --output ./case   test-support-bundle.zip
+./chute volume --pvc <NAMESPACE/PVC> --output ./case test-support-bundle.zip
 ```
 
 By Pod:
 
 ```bash
-./chute volume   --pod default/database-0   --output ./case   test-support-bundle.zip
+./chute volume --pod <NAMESPACE/POD> --output ./case test-support-bundle.zip
 ```
 
 If a Pod uses multiple PVCs, Chute refuses to guess. Select the PVC explicitly.
@@ -184,7 +177,7 @@ The remaining YAML files are the actual related objects.
 ### 4. If the case points at a node, pivot to the node
 
 ```bash
-./chute node   --output ./node-case   test-support-bundle.zip   ip-10-0-1-181
+./chute node --output ./node-case test-support-bundle.zip <NODE_NAME>
 ```
 
 A node case includes node objects, InstanceManagers, Pods, Engines, Replicas, VolumeAttachments, Volumes, Events, matching logs, a timeline, and node-local artifacts extracted from `nodes/<node>.zip` when present.
@@ -194,7 +187,7 @@ A node case includes node objects, InstanceManagers, Pods, Engines, Replicas, Vo
 If you want one projected directory for every Longhorn volume:
 
 ```bash
-./chute process   --output ./processed   test-support-bundle.zip
+./chute process --output ./processed test-support-bundle.zip
 ```
 
 This also writes bundle-level coverage information:
@@ -332,6 +325,7 @@ If you need live cluster interrogation, automated diagnosis, or remediation, Chu
 
 ## More detail
 
+- [Worked example from a real validation bundle](docs/EXAMPLE_CASE.md)
 - [Usage guide](docs/USAGE.md)
 - [Output format](docs/OUTPUT_FORMAT.md)
 - [Design decisions](docs/DESIGN_DECISIONS.md)
