@@ -170,3 +170,14 @@ A new parser, relationship rule, archive type, or heuristic should be justified 
 - or an upstream test artifact that demonstrates the need
 
 This keeps the deterministic core small and reviewable.
+
+
+## 15. Identifier matching uses resource boundaries, not arbitrary substrings
+
+Evidence matching is literal but boundary-aware.
+
+Kubernetes/Longhorn identifier characters are treated as alphanumeric characters plus `-`, `_`, and `.`. A candidate identifier only matches when the characters immediately before and after it are not part of another identifier.
+
+Reason: during CI for the real-bundle hardening pass, the PVC name `data` matched the `data` prefix inside the Pod name `database-0`. That incorrectly upgraded a contextual workload line to secondary evidence.
+
+Boundary-aware matching keeps exact identities useful without allowing short resource names to match unrelated larger names.
