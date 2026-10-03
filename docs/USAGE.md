@@ -33,7 +33,7 @@ printf '\n/testdata/manual/\n' >> .git/info/exclude
 Move or copy your bundle there:
 
 ```bash
-mv ~/Downloads/supportbundle.zip   testdata/manual/test-support-bundle.zip
+mv ~/Downloads/<support-bundle>.zip testdata/manual/test-support-bundle.zip
 ```
 
 Check that Git does not see it:
@@ -65,19 +65,19 @@ If the volume you expect is missing, do not move directly to AI analysis. First 
 ### Known Longhorn volume
 
 ```bash
-./chute volume   --output testdata/manual/case   testdata/manual/test-support-bundle.zip   pvc-abc123
+./chute volume --output testdata/manual/case testdata/manual/test-support-bundle.zip <LONGHORN_VOLUME>
 ```
 
 ### Known PVC
 
 ```bash
-./chute volume   --pvc default/data   --output testdata/manual/case   testdata/manual/test-support-bundle.zip
+./chute volume --pvc <NAMESPACE/PVC> --output testdata/manual/case testdata/manual/test-support-bundle.zip
 ```
 
 ### Known Pod
 
 ```bash
-./chute volume   --pod default/database-0   --output testdata/manual/case   testdata/manual/test-support-bundle.zip
+./chute volume --pod <NAMESPACE/POD> --output testdata/manual/case testdata/manual/test-support-bundle.zip
 ```
 
 A Pod selector is accepted only when Chute can resolve it to exactly one PVC-backed volume. If the Pod uses more than one PVC, use `--pvc`.
@@ -118,7 +118,7 @@ cat testdata/manual/case/events.yaml
 If the volume case shows attach failure, node-not-ready state, InstanceManager problems, replica locality, or other node-specific evidence:
 
 ```bash
-./chute node   --output testdata/manual/node-case   testdata/manual/test-support-bundle.zip   worker-1
+./chute node --output testdata/manual/node-case testdata/manual/test-support-bundle.zip <NODE_NAME>
 ```
 
 Read it the same way:
@@ -129,7 +129,7 @@ cat testdata/manual/node-case/timeline.md
 less testdata/manual/node-case/relevant_logs.log
 ```
 
-If the source bundle contained `nodes/worker-1.zip`, Chute safely extracts it and copies its files into:
+If the source bundle contained `nodes/<node>.zip`, Chute safely extracts it and copies its files into:
 
 ```text
 node-case/node_bundle/
@@ -142,7 +142,7 @@ Those files are still raw evidence. Chute does not reinterpret arbitrary node fi
 ```bash
 rm -rf testdata/manual/processed
 
-./chute process   --output testdata/manual/processed   testdata/manual/test-support-bundle.zip
+./chute process --output testdata/manual/processed testdata/manual/test-support-bundle.zip
 ```
 
 This is useful when:
@@ -157,7 +157,7 @@ Inspect:
 jq . testdata/manual/processed/coverage.json
 jq . testdata/manual/processed/warnings.json
 
-find testdata/manual/processed/volumes   -mindepth 1   -maxdepth 1   -type d   -print
+find testdata/manual/processed/volumes -mindepth 1 -maxdepth 1 -type d -print
 ```
 
 ## 8. Treat coverage as part of correctness
@@ -228,13 +228,13 @@ matching line
 Increase it when the component log requires more local state:
 
 ```bash
-./chute volume --context 20 test-support-bundle.zip pvc-abc123
+./chute volume --context 20 test-support-bundle.zip <LONGHORN_VOLUME>
 ```
 
 Set it to zero when you only want direct matching lines:
 
 ```bash
-./chute volume --context 0 test-support-bundle.zip pvc-abc123
+./chute volume --context 0 test-support-bundle.zip <LONGHORN_VOLUME>
 ```
 
 Larger context does not increase relationship accuracy. It only includes more surrounding text.
@@ -278,7 +278,9 @@ Then rerun the same real support bundle and compare:
 ```bash
 rm -rf testdata/manual/processed
 
-./chute process   --output testdata/manual/processed   testdata/manual/test-support-bundle.zip
+./chute process --output testdata/manual/processed testdata/manual/test-support-bundle.zip
 ```
 
 Real-bundle compatibility changes should be driven by an observed bundle shape, then captured in a minimized regression fixture. Do not commit the original bundle.
+
+For a concrete end-to-end investigation using only values observed from the first real validation bundle, see [EXAMPLE_CASE.md](EXAMPLE_CASE.md).

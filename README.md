@@ -89,8 +89,8 @@ For example:
 - a PVC name may point to a PV whose CSI `volumeHandle` is the Longhorn volume ID
 - a Pod may identify the workload using that PVC
 - a VolumeAttachment may identify the target node
-- a Longhorn Engine and three Replicas may identify the nodes actually hosting volume processes
-- a short PVC name such as `data` must not be treated as a match inside `database-0`
+- Longhorn Engine and Replica objects may identify the nodes actually hosting volume processes
+- a short resource name must not be treated as a match when it only appears inside a longer unrelated resource name
 - a useful failure may live in `longhorn-manager.log.1`, not the current log
 - the useful kubelet or mount evidence may be inside `nodes/<node>.zip`
 
@@ -129,33 +129,26 @@ test-support-bundle.zip
 ./chute inspect test-support-bundle.zip
 ```
 
-Example:
-
-```text
-VOLUME                                    PVC          NAMESPACE   STATE      ROBUSTNESS   REPLICAS   PODS
-pvc-ec25952c-fc84-4126-a5fb-9e1746e87e0e data         default     detached   unknown      3          1
-```
-
-This is usually the first command to run.
+This is usually the first command to run. For the actual January 5 validation bundle, see [the worked example](docs/EXAMPLE_CASE.md).
 
 ### 2. Build a case for one volume
 
 By Longhorn volume name:
 
 ```bash
-./chute volume   --output ./case   test-support-bundle.zip   pvc-ec25952c-fc84-4126-a5fb-9e1746e87e0e
+./chute volume --output ./case test-support-bundle.zip <LONGHORN_VOLUME>
 ```
 
 By PVC:
 
 ```bash
-./chute volume   --pvc default/data   --output ./case   test-support-bundle.zip
+./chute volume --pvc <NAMESPACE/PVC> --output ./case test-support-bundle.zip
 ```
 
 By Pod:
 
 ```bash
-./chute volume   --pod default/database-0   --output ./case   test-support-bundle.zip
+./chute volume --pod <NAMESPACE/POD> --output ./case test-support-bundle.zip
 ```
 
 If a Pod uses multiple PVCs, Chute refuses to guess. Select the PVC explicitly.
@@ -184,7 +177,7 @@ The remaining YAML files are the actual related objects.
 ### 4. If the case points at a node, pivot to the node
 
 ```bash
-./chute node   --output ./node-case   test-support-bundle.zip   ip-10-0-1-181
+./chute node --output ./node-case test-support-bundle.zip <NODE_NAME>
 ```
 
 A node case includes node objects, InstanceManagers, Pods, Engines, Replicas, VolumeAttachments, Volumes, Events, matching logs, a timeline, and node-local artifacts extracted from `nodes/<node>.zip` when present.
@@ -194,7 +187,7 @@ A node case includes node objects, InstanceManagers, Pods, Engines, Replicas, Vo
 If you want one projected directory for every Longhorn volume:
 
 ```bash
-./chute process   --output ./processed   test-support-bundle.zip
+./chute process --output ./processed test-support-bundle.zip
 ```
 
 This also writes bundle-level coverage information:
@@ -219,8 +212,8 @@ Chute includes five lines before and after each matching log line by default.
 Change it with `--context`:
 
 ```bash
-./chute volume --context 10 test-support-bundle.zip pvc-abc123
-./chute node --context 10 test-support-bundle.zip worker-1
+./chute volume --context 10 test-support-bundle.zip <LONGHORN_VOLUME>
+./chute node --context 10 test-support-bundle.zip <NODE_NAME>
 ./chute process --context 0 --output ./processed test-support-bundle.zip
 ```
 
@@ -253,7 +246,7 @@ A log line that contains an exact Longhorn volume ID is stronger evidence for th
 
 Chute keeps contextual evidence because it may explain sequence or neighboring activity, but it labels it so downstream analysis does not silently treat adjacency as identity.
 
-Identifier matching is also boundary-aware. A PVC named `data` does not match the `data` inside a Pod named `database-0`.
+Identifier matching is also boundary-aware, so a short resource name does not match merely because its characters occur inside a longer resource identifier.
 
 ## Supported input
 
@@ -332,6 +325,7 @@ If you need live cluster interrogation, automated diagnosis, or remediation, Chu
 
 ## More detail
 
+- [Worked example from a real validation bundle](docs/EXAMPLE_CASE.md)
 - [Usage guide](docs/USAGE.md)
 - [Output format](docs/OUTPUT_FORMAT.md)
 - [Design decisions](docs/DESIGN_DECISIONS.md)
