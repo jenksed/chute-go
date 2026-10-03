@@ -4,6 +4,8 @@ This document records the first validation of Chute against a real Longhorn supp
 
 The source bundle used for validation was kept local and is not committed to this repository. Regression tests reproduce the relevant structure with minimized fixture data.
 
+A command-by-command worked example using only observations from this bundle is in [EXAMPLE_CASE.md](EXAMPLE_CASE.md).
+
 ## What worked
 
 Chute successfully parsed the real bundle and built a useful volume-oriented case.
