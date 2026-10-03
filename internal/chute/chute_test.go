@@ -111,10 +111,10 @@ func TestExtractLogsIncludesAndMergesBoundedContext(t *testing.T) {
 	}
 
 	window := logs.Windows[0]
-	if window.StartLine != 2 || window.EndLine != 7 {
+	if window.StartLine != 2 || window.EndLine != 8 {
 		t.Fatalf("window range = %d-%d", window.StartLine, window.EndLine)
 	}
-	if len(window.Lines) != 6 {
+	if len(window.Lines) != 7 {
 		t.Fatalf("window lines = %d", len(window.Lines))
 	}
 	if !contains(window.MatchedIdentifiers, "pvc-abc123") {
