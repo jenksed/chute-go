@@ -240,11 +240,40 @@ func newLogScanner(reader io.Reader) *bufio.Scanner {
 func matchedIdentifiers(line string, identifiers []EvidenceIdentifier) []EvidenceIdentifier {
 	var matched []EvidenceIdentifier
 	for _, identifier := range identifiers {
-		if identifier.Value != "" && strings.Contains(line, identifier.Value) {
+		if identifier.Value != "" && containsIdentifier(line, identifier.Value) {
 			matched = append(matched, identifier)
 		}
 	}
 	return normalizeEvidenceIdentifiers(matched)
+}
+
+func containsIdentifier(line, identifier string) bool {
+	offset := 0
+	for offset <= len(line)-len(identifier) {
+		index := strings.Index(line[offset:], identifier)
+		if index < 0 {
+			return false
+		}
+		index += offset
+		end := index + len(identifier)
+
+		beforeBoundary := index == 0 || !isIdentifierByte(line[index-1])
+		afterBoundary := end == len(line) || !isIdentifierByte(line[end])
+		if beforeBoundary && afterBoundary {
+			return true
+		}
+		offset = index + 1
+	}
+	return false
+}
+
+func isIdentifierByte(value byte) bool {
+	return (value >= 'a' && value <= 'z') ||
+		(value >= 'A' && value <= 'Z') ||
+		(value >= '0' && value <= '9') ||
+		value == '-' ||
+		value == '_' ||
+		value == '.'
 }
 
 func strongestIdentifierTier(identifiers []EvidenceIdentifier) EvidenceTier {
