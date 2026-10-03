@@ -89,8 +89,8 @@ For example:
 - a PVC name may point to a PV whose CSI `volumeHandle` is the Longhorn volume ID
 - a Pod may identify the workload using that PVC
 - a VolumeAttachment may identify the target node
-- a Longhorn Engine and three Replicas may identify the nodes actually hosting volume processes
-- a short PVC name such as `data` must not be treated as a match inside `database-0`
+- Longhorn Engine and Replica objects may identify the nodes actually hosting volume processes
+- a short resource name must not be treated as a match when it only appears inside a longer unrelated resource name
 - a useful failure may live in `longhorn-manager.log.1`, not the current log
 - the useful kubelet or mount evidence may be inside `nodes/<node>.zip`
 
@@ -212,8 +212,8 @@ Chute includes five lines before and after each matching log line by default.
 Change it with `--context`:
 
 ```bash
-./chute volume --context 10 test-support-bundle.zip pvc-abc123
-./chute node --context 10 test-support-bundle.zip worker-1
+./chute volume --context 10 test-support-bundle.zip <LONGHORN_VOLUME>
+./chute node --context 10 test-support-bundle.zip <NODE_NAME>
 ./chute process --context 0 --output ./processed test-support-bundle.zip
 ```
 
@@ -246,7 +246,7 @@ A log line that contains an exact Longhorn volume ID is stronger evidence for th
 
 Chute keeps contextual evidence because it may explain sequence or neighboring activity, but it labels it so downstream analysis does not silently treat adjacency as identity.
 
-Identifier matching is also boundary-aware. A PVC named `data` does not match the `data` inside a Pod named `database-0`.
+Identifier matching is also boundary-aware, so a short resource name does not match merely because its characters occur inside a longer resource identifier.
 
 ## Supported input
 
