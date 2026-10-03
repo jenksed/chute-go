@@ -75,6 +75,105 @@ func ProjectVolume(index *Index, volumeName string) (*VolumeProjection, error) {
 	return projection, nil
 }
 
+func ResolveVolumeByPVC(index *Index, selector string) (string, error) {
+	namespace, name, err := splitNamespacedSelector(selector)
+	if err != nil {
+		return "", err
+	}
+
+	var matches []Resource
+	for _, pvc := range index.Kind("PersistentVolumeClaim") {
+		if pvc.Name == name && (namespace == "" || pvc.Namespace == namespace) {
+			matches = append(matches, pvc)
+		}
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("PVC not found: %s", selector)
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("PVC selector is ambiguous; use namespace/name: %s", selector)
+	}
+
+	volumeName := nestedString(matches[0].Data, "spec", "volumeName")
+	if volumeName == "" {
+		return "", fmt.Errorf("PVC has no bound PersistentVolume: %s", selector)
+	}
+
+	pv := index.Get("PersistentVolume", volumeName, "")
+	if pv == nil {
+		return "", fmt.Errorf("PersistentVolume not found for PVC %s: %s", selector, volumeName)
+	}
+
+	handle := nestedString(pv.Data, "spec", "csi", "volumeHandle")
+	if handle != "" {
+		return handle, nil
+	}
+	return pv.Name, nil
+}
+
+func ResolveVolumeByPod(index *Index, selector string) (string, error) {
+	namespace, name, err := splitNamespacedSelector(selector)
+	if err != nil {
+		return "", err
+	}
+
+	var matches []Resource
+	for _, pod := range index.Kind("Pod") {
+		if pod.Name == name && (namespace == "" || pod.Namespace == namespace) {
+			matches = append(matches, pod)
+		}
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("Pod not found: %s", selector)
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("Pod selector is ambiguous; use namespace/name: %s", selector)
+	}
+
+	var claims []string
+	for _, volumeValue := range nestedSlice(matches[0].Data, "spec", "volumes") {
+		volume, ok := volumeValue.(map[string]any)
+		if !ok {
+			continue
+		}
+		claim := nestedString(volume, "persistentVolumeClaim", "claimName")
+		if claim != "" {
+			claims = append(claims, claim)
+		}
+	}
+	claims = uniqueNonEmpty(claims)
+	if len(claims) == 0 {
+		return "", fmt.Errorf("Pod has no PVC-backed volumes: %s", selector)
+	}
+	if len(claims) > 1 {
+		return "", fmt.Errorf("Pod uses multiple PVCs; select one with --pvc: %s", selector)
+	}
+
+	pvcSelector := claims[0]
+	if matches[0].Namespace != "" {
+		pvcSelector = matches[0].Namespace + "/" + claims[0]
+	}
+	return ResolveVolumeByPVC(index, pvcSelector)
+}
+
+func splitNamespacedSelector(selector string) (string, string, error) {
+	parts := strings.Split(selector, "/")
+	switch len(parts) {
+	case 1:
+		if parts[0] == "" {
+			return "", "", fmt.Errorf("empty selector")
+		}
+		return "", parts[0], nil
+	case 2:
+		if parts[0] == "" || parts[1] == "" {
+			return "", "", fmt.Errorf("invalid selector %q; expected namespace/name", selector)
+		}
+		return parts[0], parts[1], nil
+	default:
+		return "", "", fmt.Errorf("invalid selector %q; expected namespace/name", selector)
+	}
+}
+
 func findPV(index *Index, volume Resource) *Resource {
 	pvName := nestedString(volume.Data, "status", "kubernetesStatus", "pvName")
 

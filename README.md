@@ -1,19 +1,22 @@
 # Chute
 
-Chute turns an extracted Longhorn support bundle into a smaller, deterministic evidence package organized around the resources an engineer actually investigates.
+Chute turns a Longhorn support bundle into a smaller, deterministic evidence package organized around the resources an engineer actually investigates.
 
-This is the Go implementation. V1 is an offline evidence transformer, not a Longhorn component and not a diagnostic authority.
+Chute is an offline evidence transformer, not a Longhorn component and not a diagnostic authority.
 
-## V1 capability
+## Current capability
 
-Given an extracted Longhorn support bundle, Chute can:
+Chute can:
 
+- accept an extracted directory, `.zip`, `.tar.gz`, or `.tgz` support bundle
 - inventory files and classify likely YAML, logs, node data, and unknown artifacts
 - parse Kubernetes and Longhorn YAML resources
 - index resources by kind and name
+- inspect discovered Longhorn volumes before choosing a case
+- resolve a volume from a PVC or Pod selector
 - connect PVCs, PVs, Pods, VolumeAttachments, Longhorn volumes, engines, replicas, and nodes using explicit identifiers
 - emit a per-volume case directory containing related objects and provenance
-- conservatively extract log lines containing identifiers related to the selected volume
+- extract bounded, deduplicated log-context windows around matching resource identifiers
 - record unclassified files in the manifest without copying the original bundle
 
 It does not attempt root-cause diagnosis.
@@ -28,19 +31,46 @@ The result is a single executable with no Go runtime installation required on th
 
 ## Usage
 
-Process every Longhorn volume found in an extracted support bundle:
+Inspect the volumes in a bundle before selecting a case:
 
 ```bash
-./chute process --output ./processed /path/to/extracted/supportbundle
+./chute inspect supportbundle.zip
 ```
 
-Project one volume into its own case directory:
+Example output:
+
+```text
+VOLUME       PVC   NAMESPACE  STATE     ROBUSTNESS  REPLICAS  PODS
+pvc-abc123   data  default    detached  degraded    2         1
+```
+
+Process every Longhorn volume found in a bundle:
 
 ```bash
-./chute volume --output ./case /path/to/extracted/supportbundle pvc-abc123
+./chute process --output ./processed supportbundle.zip
 ```
 
-The bundle must already be extracted in V1.
+Project one volume directly:
+
+```bash
+./chute volume --output ./case supportbundle.zip pvc-abc123
+```
+
+Resolve the volume from a PVC or Pod:
+
+```bash
+./chute volume --pvc default/data --output ./case supportbundle.zip
+./chute volume --pod default/database-0 --output ./case supportbundle.zip
+```
+
+Log evidence includes five lines before and after a matching line by default. Change it per command:
+
+```bash
+./chute volume --context 10 supportbundle.zip pvc-abc123
+./chute process --context 0 supportbundle.zip
+```
+
+Overlapping context windows are merged so the same evidence is not repeated.
 
 ## Output
 
@@ -65,6 +95,8 @@ processed/
         └── relevant_logs.log
 ```
 
+Each log evidence block records its source path, line range, and the identifiers that caused the match.
+
 ## Evidence boundary
 
 Chute separates four concerns:
@@ -76,14 +108,12 @@ Chute separates four concerns:
 
 Correlation is not emitted as causation.
 
-## Why Go
+## Archive handling
 
-Chute lives next to Longhorn and Kubernetes operational tooling and is intended to be easy for support engineers to distribute and run. Go gives the project a small deployment surface, a single executable, and a language/toolchain familiar to the surrounding ecosystem.
-
-That is an operational choice, not a claim that evidence transformation requires Go.
+Archives are extracted into a temporary directory and removed after the command completes. Archive entries that attempt path traversal or use symlinks/hard links are rejected.
 
 ## Current acceptance boundary
 
-The automated tests prove the synthetic vertical slice: YAML parsing, Longhorn/Kubernetes relationship projection, provenance export, bounded log filtering, and case generation.
+Automated tests cover YAML parsing, Longhorn/Kubernetes relationship projection, PVC/Pod lookup, inspection output, ZIP and tar.gz ingestion, archive path-traversal rejection, provenance export, bounded/merged log windows, and case generation.
 
-The next meaningful acceptance step is a real Longhorn support bundle. Real bundle structure and version differences should drive the next changes rather than speculative compatibility layers.
+The next meaningful acceptance step remains a real Longhorn support bundle. Real bundle structure and version differences should drive compatibility changes rather than speculative format support.

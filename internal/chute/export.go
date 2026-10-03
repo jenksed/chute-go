@@ -18,7 +18,7 @@ func SafeName(value string) string {
 	return unsafeName.ReplaceAllString(value, "_")
 }
 
-func WriteBundle(bundle *Bundle, output string) error {
+func WriteBundle(bundle *Bundle, output string, contextLines int) error {
 	absolute, err := filepath.Abs(output)
 	if err != nil {
 		return err
@@ -28,6 +28,7 @@ func WriteBundle(bundle *Bundle, output string) error {
 	}
 
 	if err := writeJSON(filepath.Join(absolute, "manifest.json"), map[string]any{
+		"input":        bundle.Input,
 		"root":         bundle.Root,
 		"files":        bundle.Inventory,
 		"parse_errors": bundle.ParseErrors,
@@ -60,7 +61,7 @@ func WriteBundle(bundle *Bundle, output string) error {
 		if err != nil {
 			return err
 		}
-		logs := ExtractLogs(bundle.Root, bundle.Inventory, projection.Identifiers)
+		logs := ExtractLogs(bundle.Root, bundle.Inventory, projection.Identifiers, contextLines)
 		if err := WriteProjection(projection, logs, filepath.Join(volumesRoot, SafeName(volume.Name))); err != nil {
 			return err
 		}
@@ -137,6 +138,8 @@ func evidenceDocument(projection *VolumeProjection, logs LogEvidence) map[string
 		"log_evidence": map[string]any{
 			"matched_lines":  logs.MatchedLines,
 			"included_lines": logs.IncludedLines,
+			"context_lines":  logs.ContextLines,
+			"windows":        len(logs.Windows),
 			"truncated":      logs.Truncated,
 			"read_errors":    logs.Errors,
 		},
@@ -169,11 +172,22 @@ func sourceDocument(projection *VolumeProjection) []map[string]any {
 
 func renderLogs(logs LogEvidence) string {
 	var builder strings.Builder
-	for _, match := range logs.Matches {
-		fmt.Fprintf(&builder, "[%s:%d] %s\n", match.Source, match.Line, match.Text)
+	for _, window := range logs.Windows {
+		fmt.Fprintf(
+			&builder,
+			"[%s:%d-%d] matched=%s\n",
+			window.Source,
+			window.StartLine,
+			window.EndLine,
+			strings.Join(window.MatchedIdentifiers, ","),
+		)
+		for _, line := range window.Lines {
+			fmt.Fprintf(&builder, "%d: %s\n", line.Line, line.Text)
+		}
+		builder.WriteString("\n")
 	}
 	if logs.Truncated {
-		fmt.Fprintf(&builder, "\n# Truncated: %d matching lines found; %d included.\n", logs.MatchedLines, logs.IncludedLines)
+		fmt.Fprintf(&builder, "# Truncated after %d included log lines.\n", logs.IncludedLines)
 	}
 	return builder.String()
 }
@@ -203,6 +217,8 @@ This file is a deterministic summary of observed bundle content. It is not a roo
 
 - Matching identifiers: %d
 - Matching lines found: %d
+- Context lines requested: %d
+- Evidence windows: %d
 - Lines included: %d
 - Truncated: %t
 
@@ -221,6 +237,8 @@ Every exported resource retains its original support-bundle source in sources.js
 		len(projection.LonghornNodes),
 		len(projection.Identifiers),
 		logs.MatchedLines,
+		logs.ContextLines,
+		len(logs.Windows),
 		logs.IncludedLines,
 		logs.Truncated,
 	)

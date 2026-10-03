@@ -7,6 +7,7 @@ import (
 )
 
 type Bundle struct {
+	Input       string
 	Root        string
 	Inventory   []InventoryEntry
 	Resources   []Resource
@@ -36,6 +37,7 @@ func Load(root string) (*Bundle, error) {
 	resources, parseErrors := ParseResources(absolute, inventory)
 
 	return &Bundle{
+		Input:       absolute,
 		Root:        absolute,
 		Inventory:   inventory,
 		Resources:   resources,
