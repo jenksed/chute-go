@@ -228,13 +228,13 @@ matching line
 Increase it when the component log requires more local state:
 
 ```bash
-./chute volume --context 20 test-support-bundle.zip pvc-abc123
+./chute volume --context 20 test-support-bundle.zip <LONGHORN_VOLUME>
 ```
 
 Set it to zero when you only want direct matching lines:
 
 ```bash
-./chute volume --context 0 test-support-bundle.zip pvc-abc123
+./chute volume --context 0 test-support-bundle.zip <LONGHORN_VOLUME>
 ```
 
 Larger context does not increase relationship accuracy. It only includes more surrounding text.
@@ -278,7 +278,7 @@ Then rerun the same real support bundle and compare:
 ```bash
 rm -rf testdata/manual/processed
 
-./chute process   --output testdata/manual/processed   testdata/manual/test-support-bundle.zip
+./chute process --output testdata/manual/processed testdata/manual/test-support-bundle.zip
 ```
 
 Real-bundle compatibility changes should be driven by an observed bundle shape, then captured in a minimized regression fixture. Do not commit the original bundle.
