@@ -1,77 +1,203 @@
 # Chute
 
-Chute turns a Longhorn support bundle into smaller, deterministic evidence packages organized around the resources an engineer actually investigates.
+Chute is a deterministic Longhorn support-bundle slicer.
 
-Chute is an offline evidence transformer, not a Longhorn component and not a diagnostic authority.
+Give it a Longhorn support bundle and a resource you care about, usually a volume, PVC, Pod, or node. Chute parses the bundle, follows explicit Kubernetes and Longhorn relationships, selects related logs and events, and writes a much smaller evidence directory with provenance.
 
-## Current capability
+It does not diagnose the problem. It prepares the evidence so a human or an LLM does not have to rediscover the topology of the bundle every time.
 
-Chute can:
+## The problem
 
-- accept an extracted directory, `.zip`, `.tar.gz`, or `.tgz` support bundle
-- inventory files and report processing coverage
-- parse Kubernetes and Longhorn YAML resources
-- recognize current, rotated, and gzip-compressed logs
-- safely ingest nested `nodes/<node>.zip` evidence
-- inspect discovered Longhorn volumes before choosing a case
-- resolve a volume from a PVC or Pod selector
-- connect PVCs, PVs, Pods, VolumeAttachments, Longhorn Volumes, Engines, Replicas, Nodes, Events, and InstanceManagers using explicit identifiers
-- emit volume-oriented and node-oriented evidence cases
-- label log matches as primary, secondary, or contextual evidence
-- emit bounded, merged log-context windows
-- emit deterministic timestamped evidence timelines
-- record unknown and unsupported artifacts instead of silently ignoring them
+A Longhorn support bundle is useful, but it is not organized like a support case.
 
-It does not attempt root-cause diagnosis.
+Evidence for one failed volume operation can be spread across:
+
+- Longhorn Volume, Engine, Replica, Node, and InstanceManager objects
+- Kubernetes PV, PVC, Pod, Node, Event, and VolumeAttachment objects
+- current logs
+- rotated logs
+- compressed logs
+- nested per-node support archives
+- files that are unrelated to the affected volume
+
+A raw bundle answers:
+
+> What did the cluster export?
+
+A support engineer usually needs:
+
+> What evidence is connected to this volume or node, where did it come from, and what happened around the same time?
+
+Chute performs that transformation deterministically.
+
+## What Chute actually does
+
+The core pipeline is:
+
+```text
+support bundle
+    |
+    v
+safe archive extraction
+    |
+    v
+file inventory
+    |
+    +--> YAML resource parsing
+    +--> current / rotated / compressed log discovery
+    +--> nested node archive ingestion
+    |
+    v
+resource index
+    |
+    v
+explicit relationship projection
+    |
+    +--> volume case
+    |      Volume -> PV/PVC -> Pod
+    |             -> VolumeAttachment
+    |             -> Engine/Replica
+    |             -> Nodes
+    |             -> Events
+    |
+    +--> node case
+           Node -> InstanceManagers
+                -> Pods
+                -> Engines/Replicas
+                -> VolumeAttachments
+                -> Volumes
+                -> node-local artifacts
+    |
+    v
+bounded evidence package
+    +--> source YAML
+    +--> relevant log windows
+    +--> events
+    +--> timeline
+    +--> provenance
+    +--> evidence-strength labels
+```
+
+No embeddings, vector database, agent loop, or LLM is required.
+
+## Why not just grep the bundle?
+
+You can, but grep does not know the object graph.
+
+For example:
+
+- a PVC name may point to a PV whose CSI `volumeHandle` is the Longhorn volume ID
+- a Pod may identify the workload using that PVC
+- a VolumeAttachment may identify the target node
+- a Longhorn Engine and three Replicas may identify the nodes actually hosting volume processes
+- a short PVC name such as `data` must not be treated as a match inside `database-0`
+- a useful failure may live in `longhorn-manager.log.1`, not the current log
+- the useful kubelet or mount evidence may be inside `nodes/<node>.zip`
+
+Chute resolves those relationships first, then searches using the resulting evidence identities.
 
 ## Build
 
+Requirements:
+
+- Go 1.23 or compatible newer Go toolchain
+- no Longhorn cluster access required
+- no network access required during analysis after dependencies are available
+
 ```bash
+git clone https://github.com/jenksed/chute-go.git
+cd chute-go
+
+go test ./...
+go vet ./...
 go build -o chute ./cmd/chute
 ```
 
-## Usage
+The built `chute` executable is the CLI.
 
-Inspect the volumes in a bundle:
+## Fastest path for a real support case
 
-```bash
-./chute inspect supportbundle.zip
+Assume:
+
+```text
+test-support-bundle.zip
 ```
 
-Process every Longhorn volume:
+### 1. See what volumes Chute found
 
 ```bash
-./chute process --output ./processed supportbundle.zip
+./chute inspect test-support-bundle.zip
 ```
 
-Project one volume:
+Example:
+
+```text
+VOLUME                                    PVC          NAMESPACE   STATE      ROBUSTNESS   REPLICAS   PODS
+pvc-ec25952c-fc84-4126-a5fb-9e1746e87e0e data         default     detached   unknown      3          1
+```
+
+This is usually the first command to run.
+
+### 2. Build a case for one volume
+
+By Longhorn volume name:
 
 ```bash
-./chute volume --output ./case supportbundle.zip pvc-abc123
+./chute volume   --output ./case   test-support-bundle.zip   pvc-ec25952c-fc84-4126-a5fb-9e1746e87e0e
 ```
 
-Resolve a volume from a PVC or Pod:
+By PVC:
 
 ```bash
-./chute volume --pvc default/data --output ./case supportbundle.zip
-./chute volume --pod default/database-0 --output ./case supportbundle.zip
+./chute volume   --pvc default/data   --output ./case   test-support-bundle.zip
 ```
 
-Project one node, including extracted node-bundle evidence when available:
+By Pod:
 
 ```bash
-./chute node --output ./node-case supportbundle.zip worker-1
+./chute volume   --pod default/database-0   --output ./case   test-support-bundle.zip
 ```
 
-Log evidence includes five lines before and after a matching line by default:
+If a Pod uses multiple PVCs, Chute refuses to guess. Select the PVC explicitly.
+
+### 3. Read these files first
+
+```text
+case/
+├── summary.md
+├── timeline.md
+├── relevant_logs.log
+├── evidence.json
+└── sources.json
+```
+
+Use them in that order:
+
+1. `summary.md` tells you what Chute related to the case.
+2. `timeline.md` orders timestamped matching evidence.
+3. `relevant_logs.log` gives bounded log context with source paths and evidence tiers.
+4. `evidence.json` gives the machine-readable case model.
+5. `sources.json` tells you where exported evidence came from.
+
+The remaining YAML files are the actual related objects.
+
+### 4. If the case points at a node, pivot to the node
 
 ```bash
-./chute volume --context 10 supportbundle.zip pvc-abc123
-./chute node --context 10 supportbundle.zip worker-1
-./chute process --context 0 supportbundle.zip
+./chute node   --output ./node-case   test-support-bundle.zip   ip-10-0-1-181
 ```
 
-## Bundle output
+A node case includes node objects, InstanceManagers, Pods, Engines, Replicas, VolumeAttachments, Volumes, Events, matching logs, a timeline, and node-local artifacts extracted from `nodes/<node>.zip` when present.
+
+## Process the whole bundle
+
+If you want one projected directory for every Longhorn volume:
+
+```bash
+./chute process   --output ./processed   test-support-bundle.zip
+```
+
+This also writes bundle-level coverage information:
 
 ```text
 processed/
@@ -80,74 +206,135 @@ processed/
 ├── coverage.json
 ├── warnings.json
 └── volumes/
-    └── <volume>/
-        ├── summary.md
-        ├── evidence.json
-        ├── sources.json
-        ├── timeline.md
-        ├── timeline.jsonl
-        ├── relevant_logs.log
-        ├── events.yaml
-        ├── volume.yaml
-        ├── engines.yaml
-        ├── replicas.yaml
-        ├── pv.yaml
-        ├── pvc.yaml
-        ├── pods.yaml
-        ├── volume_attachments.yaml
-        ├── kubernetes_nodes.yaml
-        └── longhorn_nodes.yaml
+    ├── <volume-a>/
+    └── <volume-b>/
 ```
 
-A node case additionally contains related InstanceManagers and a `node_bundle/` directory containing safely extracted node-local evidence.
+Do not assume a successful command means Chute understood every file. Check `coverage.json` and `warnings.json`.
 
-## Evidence tiers
+## Log context
 
-Chute does not treat all string matches as equally strong.
+Chute includes five lines before and after each matching log line by default.
+
+Change it with `--context`:
+
+```bash
+./chute volume --context 10 test-support-bundle.zip pvc-abc123
+./chute node --context 10 test-support-bundle.zip worker-1
+./chute process --context 0 --output ./processed test-support-bundle.zip
+```
+
+Overlapping windows are merged. Chute also enforces a global evidence-line limit so a case does not turn back into an unbounded log dump.
+
+## Evidence strength
+
+Not every related string is equally strong evidence.
+
+Chute labels identifiers as:
 
 ```text
 PRIMARY
-  Longhorn Volume / Engine / Replica / CSI VolumeAttachment
+  Longhorn Volume
+  Longhorn Engine
+  Longhorn Replica
+  CSI VolumeAttachment
 
 SECONDARY
-  PersistentVolume / PersistentVolumeClaim
+  PersistentVolume
+  PersistentVolumeClaim
 
 CONTEXTUAL
-  Pod / Node and other operational neighbors
+  Pod
+  Node
+  other operational neighbors
 ```
 
-Every evidence window records which identifiers matched and the strongest tier represented in that window.
+A log line that contains an exact Longhorn volume ID is stronger evidence for that volume than a line that only contains the Pod name.
 
-Contextual evidence is retained because it can explain operational sequence. It must not be interpreted as proof that every object mentioned in the same line belongs to the selected volume.
+Chute keeps contextual evidence because it may explain sequence or neighboring activity, but it labels it so downstream analysis does not silently treat adjacency as identity.
 
-## Coverage
+Identifier matching is also boundary-aware. A PVC named `data` does not match the `data` inside a Pod named `database-0`.
 
-`coverage.json` reports how much of the bundle Chute actually processed, including rotated logs and nested node archives.
+## Supported input
 
-`warnings.json` reports partial processing, parse failures, failed nested archive ingestion, and unknown artifacts.
+```text
+extracted directory
+.zip
+.tar.gz
+.tgz
+```
 
-Successful command execution therefore does not imply complete evidence coverage.
+Chute also recognizes:
 
-## Evidence boundary
+```text
+*.log
+*.log.N
+*.log.gz
+*.log.N.gz
+```
 
-1. Raw bundle artifacts remain authoritative.
-2. Chute derives deterministic relationships from explicit resource identifiers.
-3. Chute labels the strength of evidence used for log selection.
-4. Timelines order observed evidence without inferring causation.
-5. Root-cause judgment remains with the engineer or downstream analysis system.
+Nested `nodes/<node>.zip` archives are extracted into temporary workspace storage and added to the evidence inventory.
 
-## Archive handling
+The original bundle is never modified.
 
-Archives are extracted into temporary directories and removed after the command completes.
+Archive path traversal and archive links are rejected.
 
-The original bundle is never mutated. Archive path traversal and links are rejected. Nested node archives that cannot be safely processed are reported in warnings while the rest of the bundle remains available.
+## Volume case output
 
-## Validation
+```text
+case/
+├── summary.md
+├── evidence.json
+├── sources.json
+├── timeline.md
+├── timeline.jsonl
+├── relevant_logs.log
+├── events.yaml
+├── volume.yaml
+├── engines.yaml
+├── replicas.yaml
+├── pv.yaml
+├── pvc.yaml
+├── pods.yaml
+├── volume_attachments.yaml
+├── kubernetes_nodes.yaml
+└── longhorn_nodes.yaml
+```
 
-The initial synthetic slice was followed by validation against a real Longhorn test support bundle. That run exposed three concrete gaps: rotated logs, nested node archives, and evidence-strength ambiguity around shared workload context.
+See [docs/OUTPUT_FORMAT.md](docs/OUTPUT_FORMAT.md) for the semantics of each file.
 
-The issue, impact, remediation, and acceptance rules are documented in [docs/REAL_BUNDLE_VALIDATION.md](docs/REAL_BUNDLE_VALIDATION.md).
+## What Chute does not do
 
-Stable architectural decisions are recorded in [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md).
+Chute does not:
 
-The real support bundle is not committed. Regression tests reproduce the relevant structure with minimized fixture data.
+- declare a root cause
+- rank diagnoses
+- call an LLM
+- mutate the source bundle
+- hide unknown artifacts
+- assume contextual correlation means causation
+- require access to the original Kubernetes cluster
+
+That boundary is deliberate. Chute's job is to produce a smaller, inspectable, reproducible evidence package.
+
+## When I would use it
+
+Use Chute when you have a Longhorn support bundle and one of these is true:
+
+- you know the affected PVC, Pod, Longhorn volume, or node
+- you need to hand a bounded case to another engineer
+- you want to give an LLM relevant evidence without dumping the entire support bundle into context
+- you need explicit provenance for why an object or log block is in the case
+- you need to know whether rotated logs or node-local evidence were actually processed
+- you are comparing repeated support cases and want the preprocessing step to be deterministic
+
+If you need live cluster interrogation, automated diagnosis, or remediation, Chute is the wrong layer.
+
+## More detail
+
+- [Usage guide](docs/USAGE.md)
+- [Output format](docs/OUTPUT_FORMAT.md)
+- [Design decisions](docs/DESIGN_DECISIONS.md)
+- [First real-bundle validation](docs/REAL_BUNDLE_VALIDATION.md)
+
+The real support bundle used during validation is not committed. Regression tests reproduce the structural failure modes with minimized fixture data.
