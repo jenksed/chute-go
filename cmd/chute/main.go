@@ -22,6 +22,8 @@ func main() {
 		runInspect(os.Args[2:])
 	case "volume":
 		runVolume(os.Args[2:])
+	case "node":
+		runNode(os.Args[2:])
 	default:
 		usage()
 		os.Exit(1)
@@ -139,13 +141,55 @@ func runVolume(args []string) {
 	if err != nil {
 		fail(err)
 	}
-	logs := chute.ExtractLogs(bundle.Root, bundle.Inventory, projection.Identifiers, *contextLines)
-	if err := chute.WriteProjection(projection, logs, *output); err != nil {
+	logs := chute.ExtractLogs(bundle.Root, bundle.Inventory, projection.EvidenceIdentifiers, *contextLines)
+	timeline := chute.BuildTimeline(projection.Events, logs, projection.EvidenceIdentifiers)
+	if err := chute.WriteProjection(projection, logs, timeline, *output); err != nil {
 		fail(err)
 	}
 
 	absolute, _ := filepath.Abs(*output)
 	fmt.Printf("Wrote volume case to %s\n", absolute)
+}
+
+func runNode(args []string) {
+	flags := flag.NewFlagSet("node", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	output := flags.String("output", "", "output directory")
+	flags.StringVar(output, "o", "", "output directory")
+	contextLines := flags.Int("context", chute.DefaultLogContext, "log lines before and after a match")
+
+	if err := flags.Parse(args); err != nil {
+		os.Exit(1)
+	}
+	if flags.NArg() != 2 || *contextLines < 0 {
+		usage()
+		os.Exit(1)
+	}
+
+	input := flags.Arg(0)
+	nodeName := flags.Arg(1)
+	bundle, cleanup, err := chute.LoadInput(input)
+	if err != nil {
+		fail(err)
+	}
+	defer cleanup()
+
+	if *output == "" {
+		*output = filepath.Join(mustWorkingDir(), "chute-node-"+chute.SafeName(nodeName))
+	}
+
+	projection, err := chute.ProjectNode(bundle.Index, bundle.Inventory, nodeName)
+	if err != nil {
+		fail(err)
+	}
+	logs := chute.ExtractLogs(bundle.Root, bundle.Inventory, projection.EvidenceIdentifiers, *contextLines)
+	timeline := chute.BuildTimeline(projection.Events, logs, projection.EvidenceIdentifiers)
+	if err := chute.WriteNodeProjection(projection, logs, timeline, *output); err != nil {
+		fail(err)
+	}
+
+	absolute, _ := filepath.Abs(*output)
+	fmt.Printf("Wrote node case to %s\n", absolute)
 }
 
 func fail(err error) {
@@ -168,6 +212,7 @@ func usage() {
   chute volume [--output DIR] [--context N] INPUT VOLUME_NAME
   chute volume [--output DIR] [--context N] --pvc [NAMESPACE/]PVC INPUT
   chute volume [--output DIR] [--context N] --pod [NAMESPACE/]POD INPUT
+  chute node [--output DIR] [--context N] INPUT NODE_NAME
 
 INPUT may be an extracted directory, .zip, .tar.gz, or .tgz archive.`)
 }

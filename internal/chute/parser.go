@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -25,8 +24,7 @@ func ParseResources(root string, inventory []InventoryEntry) ([]Resource, []Pars
 			continue
 		}
 
-		path := filepath.Join(root, filepath.FromSlash(entry.Path))
-		fileResources, err := parseYAMLFile(path, entry.Path)
+		fileResources, err := parseYAMLFile(physicalPath(root, entry), entry.Path)
 		if err != nil {
 			parseErrors = append(parseErrors, ParseError{
 				Source: entry.Path,
